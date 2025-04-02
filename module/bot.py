@@ -757,7 +757,7 @@ async def download_image(session, url:tuple[str,str,int], save_path, semaphore):
                     else:
                         logger.warning(f"下载失败 {url[1]}: 状态码 {response.status}")
                         url[2] = 2
-                        if response.tatus == 404:
+                        if response.status == 404:
                             break
                     await asyncio.sleep(1)  # 等待3秒后重试
             except Exception as e:
