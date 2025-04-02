@@ -3,6 +3,7 @@ import asyncio
 import logging
 import os
 import shutil
+import signal
 import time
 from typing import List, Optional, Tuple, Union
 
@@ -184,7 +185,8 @@ async def _get_media_meta(
     """
     if _type in ["audio", "document", "video"]:
         # pylint: disable = C0301
-        file_format: Optional[str] = media_obj.mime_type.split("/")[-1]  # type: ignore
+        file_format: Optional[str] = media_obj.mime_type.split(
+            "/")[-1]  # type: ignore
     else:
         file_format = None
 
@@ -202,7 +204,8 @@ async def _get_media_meta(
     if _type in ["voice", "video_note"]:
         # pylint: disable = C0209
         file_format = media_obj.mime_type.split("/")[-1]  # type: ignore
-        file_save_path = app.get_file_save_path(_type, dirname, datetime_dir_name)
+        file_save_path = app.get_file_save_path(
+            _type, dirname, datetime_dir_name)
         file_name = "{} - {}_{}.{}".format(
             message.id,
             _type,
@@ -224,8 +227,10 @@ async def _get_media_meta(
             )
         else:
             # file_name = file_name.split(".")[0]
-            _, file_name_without_suffix = os.path.split(os.path.normpath(file_name))
-            file_name, file_name_suffix = os.path.splitext(file_name_without_suffix)
+            _, file_name_without_suffix = os.path.split(
+                os.path.normpath(file_name))
+            file_name, file_name_suffix = os.path.splitext(
+                file_name_without_suffix)
             if not file_name_suffix:
                 file_name_suffix = get_extension(
                     media_obj.file_id, getattr(media_obj, "mime_type", "")
@@ -244,12 +249,15 @@ async def _get_media_meta(
             file_name = f"{message.photo.file_unique_id}"
 
         gen_file_name = (
-            app.get_file_name(message.id, file_name, caption) + file_name_suffix
+            app.get_file_name(message.id, file_name,
+                              caption) + file_name_suffix
         )
 
-        file_save_path = app.get_file_save_path(_type, dirname, datetime_dir_name)
+        file_save_path = app.get_file_save_path(
+            _type, dirname, datetime_dir_name)
 
-        temp_file_name = os.path.join(app.temp_save_path, dirname, gen_file_name)
+        temp_file_name = os.path.join(
+            app.temp_save_path, dirname, gen_file_name)
 
         file_name = os.path.join(file_save_path, gen_file_name)
     return truncate_filename(file_name), truncate_filename(temp_file_name), file_format
@@ -273,9 +281,11 @@ async def save_msg_to_file(
 ):
     """Write message text into file"""
     dirname = validate_title(
-        message.chat.title if message.chat and message.chat.title else str(chat_id)
+        message.chat.title if message.chat and message.chat.title else str(
+            chat_id)
     )
-    datetime_dir_name = message.date.strftime(app.date_format) if message.date else "0"
+    datetime_dir_name = message.date.strftime(
+        app.date_format) if message.date else "0"
 
     file_save_path = app.get_file_save_path("msg", dirname, datetime_dir_name)
     file_name = os.path.join(
@@ -333,7 +343,8 @@ async def download_task(
         if app.hide_file_name:
             ui_file_name = f"****{os.path.splitext(file_name)[-1]}"
         if await app.upload_file(
-            file_name, update_cloud_upload_stat, (node, message.id, ui_file_name)
+            file_name, update_cloud_upload_stat, (node,
+                                                  message.id, ui_file_name)
         ):
             node.upload_success_count += 1
 
@@ -452,7 +463,8 @@ async def download_media(
             )
 
             if temp_download_path and isinstance(temp_download_path, str):
-                _check_download_finish(media_size, temp_download_path, ui_file_name)
+                _check_download_finish(
+                    media_size, temp_download_path, ui_file_name)
                 await asyncio.sleep(0.5)
                 _move_to_download_path(temp_download_path, file_name)
                 # TODO: if not exist file size or media
@@ -471,7 +483,8 @@ async def download_media(
                 )
         except pyrogram.errors.exceptions.flood_420.FloodWait as wait_err:
             await asyncio.sleep(wait_err.value)
-            logger.warning("Message[{}]: FlowWait {}", message.id, wait_err.value)
+            logger.warning("Message[{}]: FlowWait {}",
+                           message.id, wait_err.value)
             _check_timeout(retry, message.id)
         except TypeError:
             # pylint: disable = C0301
@@ -575,7 +588,8 @@ async def download_chat_task(
                 node.chat_id, message.media_group_id, message.caption_entities
             )
         else:
-            caption = app.get_caption_name(node.chat_id, message.media_group_id)
+            caption = app.get_caption_name(
+                node.chat_id, message.media_group_id)
         set_meta_data(meta_data, message, caption)
 
         if app.need_skip_message(chat_download_config, message.id):
@@ -657,6 +671,33 @@ def main():
         workdir=app.session_file_path,
         start_timeout=app.start_timeout,
     )
+
+    def finish():
+        app.is_running = False
+        if app.bot_token:
+            app.loop.run_until_complete(stop_download_bot())
+        app.loop.run_until_complete(stop_server(client))
+        for task in tasks:
+            task.cancel()
+        logger.info(_t("Stopped!"))
+        # check_for_updates(app.proxy)
+        logger.info(f"{_t('update config')}......")
+        app.update_config()
+        logger.success(
+            f"{_t('Updated last read message_id to config file')},"
+            f"{_t('total download')} {app.total_download_task}, "
+            f"{_t('total upload file')} "
+            f"{app.cloud_drive_config.total_upload_success_file_count}"
+        )
+    # 处理容器停止时的清理逻辑
+    def handle_exit(signum, frame):
+        print("⚠️  进程收到停止信号，执行清理任务...")
+        # 这里可以添加关闭数据库连接、保存状态等操作
+        finish()
+
+    # 监听 SIGTERM 和 SIGINT
+    signal.signal(signal.SIGTERM, handle_exit)
+    signal.signal(signal.SIGINT, handle_exit)
     try:
         app.pre_run()
         init_web(app)
@@ -676,28 +717,14 @@ def main():
                 start_download_bot(app, client, add_download_task, download_chat_task)
             )
         _exec_loop()
+        
     except KeyboardInterrupt:
         logger.info(_t("KeyboardInterrupt"))
     except Exception as e:
         logger.exception("{}", e)
     finally:
-        app.is_running = False
-        if app.bot_token:
-            app.loop.run_until_complete(stop_download_bot())
-        app.loop.run_until_complete(stop_server(client))
-        for task in tasks:
-            task.cancel()
-        logger.info(_t("Stopped!"))
-        # check_for_updates(app.proxy)
-        logger.info(f"{_t('update config')}......")
-        app.update_config()
-        logger.success(
-            f"{_t('Updated last read message_id to config file')},"
-            f"{_t('total download')} {app.total_download_task}, "
-            f"{_t('total upload file')} "
-            f"{app.cloud_drive_config.total_upload_success_file_count}"
-        )
-
+        finish()
+    time.sleep(2)
 
 if __name__ == "__main__":
     if _check_config():

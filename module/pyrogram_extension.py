@@ -859,7 +859,7 @@ async def _report_bot_status(
             )
 
         for idx, value in node.cloud_drive_upload_stat_dict.items():
-            if value.transferred == value.total:
+            if value.transferred.strip() == value.total.strip():
                 continue
 
             temp_file_name = truncate_filename(os.path.basename(value.file_name), 10)

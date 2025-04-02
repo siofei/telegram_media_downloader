@@ -2,14 +2,20 @@
 
 import asyncio
 import os
+import math
 from datetime import datetime
 from typing import Callable, List, Union
+from urllib.parse import unquote, urljoin, urlparse
+from pathlib import Path
 
+import aiohttp
 import pyrogram
 from loguru import logger
 from pyrogram import types
 from pyrogram.handlers import CallbackQueryHandler, MessageHandler
 from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+import requests
+from pyquery import PyQuery as pq
 from ruamel import yaml
 
 import utils
@@ -62,7 +68,8 @@ class DownloadBot:
         self.is_running = True
         self.allowed_user_ids: List[Union[int, str]] = []
 
-        meta = MetaData(datetime(2022, 8, 5, 14, 35, 12), 0, "", 0, 0, 0, "", 0)
+        meta = MetaData(datetime(2022, 8, 5, 14, 35, 12),
+                        0, "", 0, 0, 0, "", 0)
         self.filter.set_meta_data(meta)
 
         self.download_filter: List[str] = []
@@ -120,7 +127,8 @@ class DownloadBot:
         bool
         """
 
-        self.download_filter = _config.get("download_filter", self.download_filter)
+        self.download_filter = _config.get(
+            "download_filter", self.download_filter)
 
         return True
 
@@ -237,6 +245,14 @@ class DownloadBot:
                 & pyrogram.filters.user(self.allowed_user_ids),
             )
         )
+        # telegrph图片下载
+        self.bot.add_handler(
+            MessageHandler(
+                download_from_telegra_link,
+                # filters=pyrogram.filters.regex(r"^https://telegra.ph/.*")&
+                filters=pyrogram.filters.user(self.allowed_user_ids),
+            )
+        )
         self.bot.add_handler(
             MessageHandler(
                 set_listen_forward_msg,
@@ -290,7 +306,8 @@ class DownloadBot:
 
         self.bot.add_handler(
             CallbackQueryHandler(
-                on_query_handler, filters=pyrogram.filters.user(self.allowed_user_ids)
+                on_query_handler, filters=pyrogram.filters.user(
+                    self.allowed_user_ids)
             )
         )
 
@@ -301,7 +318,8 @@ class DownloadBot:
         except Exception:
             pass
 
-        self.reply_task = _bot.app.loop.create_task(_bot.update_reply_message())
+        self.reply_task = _bot.app.loop.create_task(
+            _bot.update_reply_message())
 
         self.bot.add_handler(
             MessageHandler(
@@ -605,6 +623,7 @@ async def download_from_link(client: pyrogram.Client, message: pyrogram.types.Me
     """
 
     if not message.text or not message.text.startswith("https://t.me"):
+        logger.info(f"{message.text}")
         return
 
     msg = (
@@ -643,8 +662,182 @@ async def download_from_link(client: pyrogram.Client, message: pyrogram.types.Me
     )
 
 
-# pylint: disable = R0912, R0915,R0914
+async def download_from_telegra_link(client: pyrogram.Client, message: pyrogram.types.Message):
+    """
+    Downloads a single message from a Telegram link.
+    """
+    https_base_url = "https://telegra.ph/"
+    http_base_url = 'http://telegra.ph/'
+    base_url = ""
 
+    def is_absolute_url(url):
+        parsed_url = urlparse(url)
+        return bool(parsed_url.scheme) and bool(parsed_url.netloc)
+
+    telegra_url = ""
+    if message.text and '://telegra.ph' in message.text:
+        if https_base_url in message.text:
+            base_url = https_base_url
+        elif http_base_url in message.text:
+            base_url = http_base_url
+        telegra_url = message.text.split()[0]
+    elif message.entities:
+        for item in message.entities:
+            if item.url and '://telegra.ph' in item.url:
+                if https_base_url in message.text:
+                    base_url = https_base_url
+                elif http_base_url in message.text:
+                    base_url = http_base_url
+                telegra_url = item.url
+                break
+    if not telegra_url:
+        return
+    
+    telegra_url = unquote(telegra_url)
+
+    async with aiohttp.ClientSession() as session:
+        async with session.get(telegra_url) as response:
+            if response.status != 200:
+                await client.send_message(message.from_user.id, "无法访问该链接")
+                return
+            html_content = await response.text()
+
+    doc = pq(html_content)
+    images = doc('img')
+
+    telegra_images: List[List[str, str, int]] = []
+    download_status = ('等待下载', '下载成功', '下载失败')
+    msg = f"{telegra_url}\n"
+    image_count_zero = int(math.log10(images.size())) + 1
+    for i, item in enumerate(images.items()):
+        src = item.attr('src')
+        if is_absolute_url(src):
+            telegra_images.append([f"{i:0{image_count_zero}d}", src, 0])
+        else:
+            telegra_images.append([f"{i:0{image_count_zero}d}", urljoin(base_url, src), 0])
+
+    if telegra_images:
+        pass
+    else:
+        msg = "未解析出图片url"
+    reply = await client.send_message(message.from_user.id, msg,
+                              reply_to_message_id=message.id, parse_mode=pyrogram.enums.ParseMode.HTML)
+    await download_picture_urls(client, message, reply, telegra_images, os.path.join(_bot.app.save_path, 'telegra', telegra_url.split('/')[-1]), _bot.app.max_download_task)
+
+# pylint: disable = R0912, R0915,R0914
+# 下载单个图片的异步函数
+# url:[index, src, status]
+async def download_image(session, url:tuple[str,str,int], save_path, semaphore):
+    async with semaphore:  # 使用信号量控制并发
+        retry = 3
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
+            "Accept": "image/jpeg, image/png",
+            # 可以添加其他请求头
+        }
+        while retry > 0:
+            retry -= 1
+            try:
+                async with session.get(url[1], timeout=10, headers=headers) as response:
+                    if response.status == 200:
+                        Filepath = os.path.join(save_path, f"{url[0]}.jpg")
+                        filepath = Path(Filepath)
+                        # 获取目录路径
+                        directory = filepath.parent
+                        # 检查并创建目录
+                        directory.mkdir(parents=True, exist_ok=True)  # 递归创建目录，存在时不报错
+                        content = await response.read()
+                        with open(filepath, "wb") as f:
+                            f.write(content)
+                        url[2] = 1
+                        await _bot.app.upload_file(Filepath)
+                        logger.info(f"{url[0]}下载完成: {url[1]}")
+                        break
+                    else:
+                        logger.warning(f"下载失败 {url[1]}: 状态码 {response.status}")
+                        url[2] = 2
+                        if response.tatus == 404:
+                            break
+                    await asyncio.sleep(1)  # 等待3秒后重试
+            except Exception as e:
+                url[2] = 2
+                logger.error(f"下载出错 {url[1]}: {e}")
+
+# urls:[[index, src, status]]
+async def download_picture_urls(client: pyrogram.Client, message: pyrogram.types.Message, reply: pyrogram.types.Message, urls:List[tuple[str,str, int]], save_path, max_concurrent=5):
+    semaphore = asyncio.Semaphore(max_concurrent)  # 设置最大并发数
+    async with aiohttp.ClientSession() as session:
+        tasks = [download_image(session, url, save_path, semaphore) for url in urls]
+        progress_task = asyncio.create_task(progress_updater(client, message, reply, urls))
+        try:
+            await asyncio.gather(*tasks)
+        except Exception as e:
+            logger.error(f"下载任务中出现异常: {e}")
+        finally:
+            progress_task.cancel()  # 确保进度更新任务被取消
+
+# 定期检查进度的协程
+async def progress_updater(client: pyrogram.Client, message: pyrogram.types.Message, reply: pyrogram.types.Message, images:List[tuple[str, str, int]], interval=2):
+    total = len(images)
+    temp_msg = ""
+    while True:
+        completed = sum(1 for _, _, status in images if status == 1)
+        failed = sum(1 for _, _, status in images if status == 2)
+        msg = ( f"<a href='{images[2]}'>下载进度:</a>\n"
+                f"<div>总数: {total}</div>\n"
+                f"<div完成: {completed}</div>\n"
+                f"<div失败: {failed}</div>\n"
+                f"<div>{'正在下载中...' if completed + failed < total else '下载完成'}</div>"
+                )
+        try:
+            if msg != temp_msg:
+                temp_msg = msg
+                await client.edit_message_text(
+                    message.chat.id,
+                    reply.id,
+                    msg,
+                    parse_mode=pyrogram.enums.ParseMode.HTML
+                )
+        except Exception as e:
+            logger.warning(e)
+        finally:
+            if completed + failed >= total:
+                break
+        await asyncio.sleep(interval)  # 每隔 interval 秒检查一次
+
+async def progress_updater(client: pyrogram.Client, message: pyrogram.types.Message, reply: pyrogram.types.Message, images: List[tuple[str, str, int]], interval=2, timeout=300):
+    total = len(images)
+    temp_msg = ""
+    elapsed_time = 0
+    while elapsed_time < timeout:  # 添加超时机制
+        completed = sum(1 for _, _, status in images if status == 1)
+        failed = sum(1 for _, _, status in images if status == 2)
+        msg = (
+            f"下载进度:\n"
+            f"总数: {total}\n"
+            f"完成: {completed}\n"
+            f"失败: {failed}\n"
+            f"{'正在下载中...' if completed + failed < total else '下载完成'}"
+        )
+        try:
+            if msg != temp_msg:
+                temp_msg = msg
+                await client.edit_message_text(
+                    message.chat.id,
+                    reply.id,
+                    msg,
+                    parse_mode=pyrogram.enums.ParseMode.HTML
+                )
+        except Exception as e:
+            logger.warning(e)
+        finally:
+            if completed + failed >= total:
+                break
+        await asyncio.sleep(interval)
+        elapsed_time += interval
+
+    if elapsed_time >= timeout:
+        logger.warning("进度更新超时，停止更新任务。")
 
 async def download_from_bot(client: pyrogram.Client, message: pyrogram.types.Message):
     """Download from bot"""
@@ -724,7 +917,8 @@ async def download_from_bot(client: pyrogram.Client, message: pyrogram.types.Mes
             )
             _bot.add_task_node(node)
             _bot.app.loop.create_task(
-                _bot.download_chat_task(_bot.client, chat_download_config, node)
+                _bot.download_chat_task(
+                    _bot.client, chat_download_config, node)
             )
     except Exception as e:
         await client.send_message(
@@ -926,7 +1120,7 @@ async def forward_message_impl(
                 f"{_t('Error forwarding message')} {e}",
             )
         finally:
-            await report_bot_status(client, node, immediate_reply=True)
+            await report_bot_forward_status(client, node, immediate_reply=True)
             node.stop_transmission()
     else:
         await forward_msg(node, offset_id)
@@ -956,9 +1150,11 @@ async def forward_normal_content(
         caption = message.caption
         if caption:
             caption = validate_title(caption)
-            _bot.app.set_caption_name(node.chat_id, message.media_group_id, caption)
+            _bot.app.set_caption_name(
+                node.chat_id, message.media_group_id, caption)
         else:
-            caption = _bot.app.get_caption_name(node.chat_id, message.media_group_id)
+            caption = _bot.app.get_caption_name(
+                node.chat_id, message.media_group_id)
         set_meta_data(meta_data, message, caption)
         _bot.filter.set_meta_data(meta_data)
         if not _bot.filter.exec(node.download_filter):
@@ -1166,3 +1362,7 @@ async def forward_to_comments(client: pyrogram.Client, message: pyrogram.types.M
         message (pyrogram.types.Message): The message containing the command.
     """
     return await forward_message_impl(client, message, True)
+
+
+
+    
