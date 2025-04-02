@@ -684,10 +684,11 @@ async def download_from_telegra_link(client: pyrogram.Client, message: pyrogram.
     elif message.entities:
         for item in message.entities:
             if item.url and '://telegra.ph' in item.url:
-                if https_base_url in message.text:
+                if https_base_url in item.url:
                     base_url = https_base_url
-                elif http_base_url in message.text:
+                elif http_base_url in item.url:
                     base_url = http_base_url
+                
                 telegra_url = item.url
                 break
     if not telegra_url:
