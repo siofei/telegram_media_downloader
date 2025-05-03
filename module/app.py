@@ -751,9 +751,9 @@ class Application:
         for pattern in stop_phrases:
             text = re.sub(pattern, "", text, flags=re.IGNORECASE)
 
-        # 提取 #词（去掉 #）
-        boost_words = set(re.findall(r"#(\w+)", text))
-
+        # 增加关键词权重
+        kl = " ".join([k for k in text.split(" ") if len(k) <= 5])
+        text = text + " " + kl * 5
         # TF-IDF 和 TextRank 提取
         tfidf = dict(jieba.analyse.extract_tags(text, topK=20, withWeight=True))
         textrank = dict(jieba.analyse.textrank(text, topK=20, withWeight=True))
@@ -764,9 +764,6 @@ class Application:
             tfidf_score = tfidf.get(word, 0)
             textrank_score = textrank.get(word, 0)
             score = 0.5 * tfidf_score + 0.5 * textrank_score
-
-            if word in boost_words:
-                score *= boost_factor
 
             combined[word] = score
 
@@ -821,8 +818,6 @@ class Application:
             elif prefix == "keyword":
                 text = caption.replace("_", " ") if caption else ""
                 keywords=self.extract_keywords_with_boost_and_cleaning(text)
-                # 使用jieba.analyse.extract_tags()提取关键词
-                # keywords = jieba.analyse.extract_tags(text, topK=5, withWeight=False)
                 if keywords:
                     res_list.append(f"{' '.join(keywords)}")
         if res_list:
