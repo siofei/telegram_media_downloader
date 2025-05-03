@@ -2,6 +2,7 @@
 
 import asyncio
 import os
+import re
 import time
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
@@ -9,6 +10,7 @@ from datetime import datetime
 from enum import Enum
 from typing import Callable, List, Optional, Union
 
+import jieba.analyse
 from loguru import logger
 from ruamel import yaml
 
@@ -384,7 +386,7 @@ class Application:
         self.config: dict = {}
         self.app_data: dict = {}
         self.file_path_prefix: List[str] = ["chat_title", "media_datetime"]
-        self.file_name_prefix: List[str] = ["message_id", "file_name"]
+        self.file_name_prefix: List[str] = ["message_id", "file_name", "tag"]
         self.file_name_prefix_split: str = " - "
         self.log_file_path = os.path.join(os.path.abspath("."), "log")
         self.session_file_path = os.path.join(os.path.abspath("."), "sessions")
@@ -744,20 +746,35 @@ class Application:
             File name
         """
 
+        res_list: List[str] = []
         res: str = ""
         for prefix in self.file_name_prefix:
             if prefix == "message_id":
-                if res != "":
-                    res += self.file_name_prefix_split
-                res += f"{message_id}"
+                res_list.append(f"{message_id}")
+               
             elif prefix == "file_name" and file_name:
-                if res != "":
-                    res += self.file_name_prefix_split
-                res += f"{file_name}"
+                res_list.append(f"{file_name}")
+                
             elif prefix == "caption" and caption:
-                if res != "":
-                    res += self.file_name_prefix_split
-                res += f"{caption}"
+                res_list.append(f"{caption}")
+                
+            elif prefix == "tag":
+                text = caption.replace("_", " ") if caption else ""
+                # 正则表达式解释：
+                # #       匹配字面字符 '#'
+                # \S+     匹配一个或多个非空白字符 (用来匹配标签内容)
+                hashtag_pattern = r'#\S+'
+                extracted_tags = re.findall(hashtag_pattern, text)
+                if extracted_tags:
+                    res_list.append(f"{' '.join(extracted_tags)}")
+            elif prefix == "keyword":
+                text = caption.replace("_", " ") if caption else ""
+                # 使用jieba.analyse.extract_tags()提取关键词
+                keywords = jieba.analyse.extract_tags(text, topK=5, withWeight=False)
+                if keywords:
+                    res_list.append(f"{' '.join(keywords)}")
+        if res_list:
+            res = self.file_name_prefix_split.join(res_list).replace("#", "")
         if res == "":
             res = f"{message_id}"
 
