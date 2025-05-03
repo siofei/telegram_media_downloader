@@ -4,6 +4,7 @@ import functools
 import importlib
 import inspect
 import os
+import pathlib
 import re
 from asyncio import subprocess
 from subprocess import Popen
@@ -99,13 +100,14 @@ class CloudDrive:
         """Use Rclone upload file"""
         upload_status: bool = False
         try:
-            remote_dir = (
-                drive_config.remote_dir
-                + "/"
-                + os.path.dirname(local_file_path).replace(save_path, "")
-                + "/"
-            ).replace("\\", "/")
-
+            # remote_dir = (
+            #     drive_config.remote_dir
+            #     + "/"
+            #     + os.path.dirname(os.path.abspath(local_file_path)).replace(os.path.abspath(save_path), "")
+            #     + "/"
+            # ).replace("\\", "/")
+            
+            remote_dir = drive_config.remote_dir + "/" + pathlib.Path(local_file_path).absolute().relative_to(pathlib.Path(save_path).absolute()).as_posix()
             if not drive_config.dir_cache.get(remote_dir):
                 CloudDrive.rclone_mkdir(drive_config, remote_dir)
                 drive_config.dir_cache[remote_dir] = True

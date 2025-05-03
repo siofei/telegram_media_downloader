@@ -759,7 +759,7 @@ async def download_image(session, url:tuple[str,str,int], save_path, semaphore):
                         url[2] = 2
                         if response.status == 404:
                             break
-                    await asyncio.sleep(1)  # 等待3秒后重试
+                    await asyncio.sleep(3)  # 等待3秒后重试
             except Exception as e:
                 url[2] = 2
                 logger.error(f"下载出错 {url[1]}: {e}")
@@ -781,6 +781,7 @@ async def download_picture_urls(client: pyrogram.Client, message: pyrogram.types
 async def progress_updater(client: pyrogram.Client, message: pyrogram.types.Message, reply: pyrogram.types.Message, images:List[tuple[str, str, int]], interval=2):
     total = len(images)
     temp_msg = ""
+    breakpoint = False
     while True:
         completed = sum(1 for _, _, status in images if status == 1)
         failed = sum(1 for _, _, status in images if status == 2)
@@ -790,6 +791,8 @@ async def progress_updater(client: pyrogram.Client, message: pyrogram.types.Mess
                 f"<div失败: {failed}</div>\n"
                 f"<div>{'正在下载中...' if completed + failed < total else '下载完成'}</div>"
                 )
+        if completed + failed >= total:
+                breakpoint = True
         try:
             if msg != temp_msg:
                 temp_msg = msg
@@ -802,7 +805,7 @@ async def progress_updater(client: pyrogram.Client, message: pyrogram.types.Mess
         except Exception as e:
             logger.warning(e)
         finally:
-            if completed + failed >= total:
+            if breakpoint:
                 break
         await asyncio.sleep(interval)  # 每隔 interval 秒检查一次
 
