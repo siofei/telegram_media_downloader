@@ -3,6 +3,7 @@
 import asyncio
 import os
 import re
+from collections import defaultdict
 import time
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
@@ -723,6 +724,56 @@ class Application:
             elif prefix == "media_type":
                 res = os.path.join(res, media_type)
         return res
+    
+    @staticmethod
+    def extract_keywords_with_boost_and_cleaning(text:str, top_k=5, boost_factor=1.5):
+        """
+        提取关键词，融合 TF-IDF + TextRank，并对 #词加权，自动清除链接与推广词。
+        
+        参数：
+            text (str): 输入文本
+            top_k (int): 返回前多少个关键词
+            boost_factor (float): #词的权重放大倍数
+        
+        返回：
+            List[str]: 排序后的关键词列表
+        """
+
+        # 清除链接、@用户名、推广词等
+        stop_phrases = [
+            r"http[s]?://\S+",   # URL
+            r"@[\w_]+",          # Telegram 用户名
+            r"VIP", r"vip", r"usdt", r"\d+",
+            r"群", r"点击", r"联系", r"客服",
+            r"购买", r"支付", r"付款", r"失败", r"自助", r"提取",
+            r"更多精彩内容.*",    # 常见广告结尾
+        ]
+        for pattern in stop_phrases:
+            text = re.sub(pattern, "", text, flags=re.IGNORECASE)
+
+        # 提取 #词（去掉 #）
+        boost_words = set(re.findall(r"#(\w+)", text))
+
+        # TF-IDF 和 TextRank 提取
+        tfidf = dict(jieba.analyse.extract_tags(text, topK=20, withWeight=True))
+        textrank = dict(jieba.analyse.textrank(text, topK=20, withWeight=True))
+
+        # 融合
+        combined = defaultdict(float)
+        for word in set(tfidf) | set(textrank):
+            tfidf_score = tfidf.get(word, 0)
+            textrank_score = textrank.get(word, 0)
+            score = 0.5 * tfidf_score + 0.5 * textrank_score
+
+            if word in boost_words:
+                score *= boost_factor
+
+            combined[word] = score
+
+        # 排序并返回关键词
+        sorted_keywords = sorted(combined.items(), key=lambda x: x[1], reverse=True)
+        return [word for word, _ in sorted_keywords[:top_k]]
+
 
     def get_file_name(
         self, message_id: int, file_name: Optional[str], caption: Optional[str]
@@ -769,8 +820,9 @@ class Application:
                     res_list.append(f"{' '.join(extracted_tags)}")
             elif prefix == "keyword":
                 text = caption.replace("_", " ") if caption else ""
+                keywords=self.extract_keywords_with_boost_and_cleaning(text)
                 # 使用jieba.analyse.extract_tags()提取关键词
-                keywords = jieba.analyse.extract_tags(text, topK=5, withWeight=False)
+                # keywords = jieba.analyse.extract_tags(text, topK=5, withWeight=False)
                 if keywords:
                     res_list.append(f"{' '.join(keywords)}")
         if res_list:
