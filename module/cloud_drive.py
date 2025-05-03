@@ -107,7 +107,7 @@ class CloudDrive:
             #     + "/"
             # ).replace("\\", "/")
             
-            remote_dir = drive_config.remote_dir + "/" + pathlib.Path(local_file_path).absolute().relative_to(pathlib.Path(save_path).absolute()).as_posix()
+            remote_dir = drive_config.remote_dir + "/" + pathlib.Path(local_file_path).absolute().relative_to(pathlib.Path(save_path).absolute()).parent.as_posix()
             if not drive_config.dir_cache.get(remote_dir):
                 CloudDrive.rclone_mkdir(drive_config, remote_dir)
                 drive_config.dir_cache[remote_dir] = True
