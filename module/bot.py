@@ -313,10 +313,10 @@ class DownloadBot:
 
         self.client.add_handler(MessageHandler(listen_forward_msg))
 
-        try:
-            await send_help_str(self.bot, admin.id)
-        except Exception:
-            pass
+        # try:
+        #     await send_help_str(self.bot, admin.id)
+        # except Exception:
+        #     pass
 
         self.reply_task = _bot.app.loop.create_task(
             _bot.update_reply_message())
