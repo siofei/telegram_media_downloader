@@ -627,7 +627,7 @@ async def download_all_chat(client: pyrogram.Client):
             finally:
                 value.need_check = True
         refresh = app.config.get("auto_refresh_chat_message", False) and app.is_running
-        if app.config.get("refresh_chat_message_time_hour", 3) > 0 and app.is_running:
+        if app.config.get("refresh_chat_message_time_hour", 3) > 0 and refresh:
             await asyncio.sleep(app.config.get("refresh_chat_message_time_hour", 3) * 3600)
 
 
