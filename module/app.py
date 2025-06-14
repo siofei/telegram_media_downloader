@@ -310,7 +310,6 @@ class ChatDownloadConfig:
         self.upload_telegram_chat_id: Union[int, str] = None
         self.node: TaskNode = TaskNode(0)
 
-
 def get_config(config, key, default=None, val_type=str, verbose=True):
     """
     Retrieves a configuration value from the given `config` dictionary
@@ -578,6 +577,12 @@ class Application:
                     ].upload_telegram_chat_id = item.get(
                         "upload_telegram_chat_id", None
                     )
+                    self.chat_download_config[
+                        item["chat_id"]
+                    ].auto_refresh = item.get("auto_refresh", True)
+                    self.chat_download_config[
+                        item["chat_id"]
+                    ].refresh_time = item.get("refresh_time_hour", 3)
         elif _config.get("chat_id"):
             # Compatible with lower versions
             self._chat_id = _config["chat_id"]

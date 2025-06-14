@@ -615,15 +615,20 @@ async def download_chat_task(
 
 
 async def download_all_chat(client: pyrogram.Client):
-    """Download All chat"""
-    for key, value in app.chat_download_config.items():
-        value.node = TaskNode(chat_id=key)
-        try:
-            await download_chat_task(client, value, value.node)
-        except Exception as e:
-            logger.warning(f"Download {key} error: {e}")
-        finally:
-            value.need_check = True
+    """Download All chat, repeat for specified times with interval seconds."""
+    refresh = True
+    while refresh:
+        for key, value in app.chat_download_config.items():
+            value.node = TaskNode(chat_id=key)
+            try:
+                await download_chat_task(client, value, value.node)
+            except Exception as e:
+                logger.warning(f"Download {key} error: {e}")
+            finally:
+                value.need_check = True
+        refresh = app.config.get("auto_refresh_chat_message", False)
+        if app.config.get("refresh_chat_message_time_hour", 3) > 0:
+            await asyncio.sleep(app.config.get("refresh_chat_message_time_hour", 3))
 
 
 async def run_until_all_task_finish():
