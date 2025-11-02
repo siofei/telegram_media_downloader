@@ -145,30 +145,26 @@ def _can_download(_type: str, file_formats: dict, file_format: Optional[str]) ->
 downloaded_message_ids:dict[str, set[int]] = {}
 
 def _is_exist_message_id(message_id: int, file_name: str) -> bool:
-    if message_id in downloaded_message_ids[os.path.dirname(file_name)]:
+    ids = downloaded_message_ids.get(os.path.dirname(file_name), set())
+    if not ids:
+        added_message_id(-1, file_name)
+        ids = downloaded_message_ids.get(os.path.dirname(file_name), set())
+    if message_id in ids:
         return True
 
     return False
 
 def added_message_id(message_id: int, file_name: str):
-    # 判断file_name是目录还是文件路径
-    if os.path.isdir(file_name):
-        # 如果是目录，则将message_id添加到目录对应的集合中
-        if file_name not in downloaded_message_ids:
-            downloaded_message_ids[file_name] = set()
-        downloaded_message_ids[file_name].add(message_id)
-    else:
-        # 如果是文件，则将message_id添加到文件所在目录对应的集合中
-        dirname = os.path.dirname(file_name)
-        if dirname not in downloaded_message_ids:
-            downloaded_message_ids[dirname] = set()
-            # 查找对应目录下已存在的文件，添加对应的message_id
-            for existing_file in os.listdir(dirname):
-                existing_file_path = os.path.join(dirname, existing_file)
-                if os.path.isfile(existing_file_path):
-                    existing_message_id = app.get_message_id_from_file_name(existing_file) | 0
-                    downloaded_message_ids[dirname].add(existing_message_id)
-        downloaded_message_ids[dirname].add(message_id)
+    dirname = os.path.dirname(file_name)
+    if dirname not in downloaded_message_ids:
+        downloaded_message_ids[dirname] = set()
+        # 查找对应目录下已存在的文件，添加对应的message_id
+        for existing_file in os.listdir(dirname):
+            existing_file_path = os.path.join(dirname, existing_file)
+            if os.path.isfile(existing_file_path):
+                existing_message_id = app.get_message_id_file_name(existing_file) | 0
+                downloaded_message_ids[dirname].add(existing_message_id)
+    downloaded_message_ids[dirname].add(message_id)
 
 
 def _is_exist(file_path: str) -> bool:
