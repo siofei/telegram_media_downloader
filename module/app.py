@@ -774,7 +774,7 @@ class Application:
 
         # 排序并返回关键词
         sorted_keywords = sorted(combined.items(), key=lambda x: x[1], reverse=True)
-        return [word for word, _ in sorted_keywords[:top_k]]
+        return [word for word, _ in sorted_keywords[:top_k]].sort()
 
 
     def get_file_name(
@@ -831,6 +831,27 @@ class Application:
             res = f"{message_id}"
 
         return validate_title(res)
+    def get_message_id_file_name(self, file_name: str) -> Optional[int]:
+        """
+        尝试从文件名获取messsage_id
+        """
+        split_parts = file_name.split(self.file_name_prefix_split)
+        if not split_parts:
+            return None
+
+        try:
+            if "message_id" in self.file_name_prefix:
+                message_id_index = self.file_name_prefix.index("message_id")
+                if message_id_index >= len(split_parts):
+                    return None
+                if split_parts[message_id_index].isdigit():
+                    return int(split_parts[message_id_index])
+                else:
+                    for part in split_parts:
+                        if part.isdigit():
+                            return int(part)
+        except ValueError:
+            return None
 
     def need_skip_message(
         self, download_config: ChatDownloadConfig, message_id: int

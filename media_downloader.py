@@ -142,6 +142,34 @@ def _can_download(_type: str, file_formats: dict, file_format: Optional[str]) ->
             return False
     return True
 
+downloaded_message_ids:dict[str, set[int]] = {}
+
+def _is_exist_message_id(message_id: int, file_name: str) -> bool:
+    if message_id in downloaded_message_ids[os.path.dirname(file_name)]:
+        return True
+
+    return False
+
+def added_message_id(message_id: int, file_name: str):
+    # 判断file_name是目录还是文件路径
+    if os.path.isdir(file_name):
+        # 如果是目录，则将message_id添加到目录对应的集合中
+        if file_name not in downloaded_message_ids:
+            downloaded_message_ids[file_name] = set()
+        downloaded_message_ids[file_name].add(message_id)
+    else:
+        # 如果是文件，则将message_id添加到文件所在目录对应的集合中
+        dirname = os.path.dirname(file_name)
+        if dirname not in downloaded_message_ids:
+            downloaded_message_ids[dirname] = set()
+            # 查找对应目录下已存在的文件，添加对应的message_id
+            for existing_file in os.listdir(dirname):
+                existing_file_path = os.path.join(dirname, existing_file)
+                if os.path.isfile(existing_file_path):
+                    existing_message_id = app.get_message_id_from_file_name(existing_file) | 0
+                    downloaded_message_ids[dirname].add(existing_message_id)
+        downloaded_message_ids[dirname].add(message_id)
+
 
 def _is_exist(file_path: str) -> bool:
     """
@@ -422,6 +450,13 @@ async def download_media(
                 ui_file_name = f"****{os.path.splitext(file_name)[-1]}"
 
             if _can_download(_type, file_formats, file_format):
+                if _is_exist_message_id(message.id, file_name):
+                    logger.info(
+                        f"id={message.id} {ui_file_name} "
+                        f"{_t('already download,download skipped')}.\n"
+                    )
+
+                    return DownloadStatus.SkipDownload, None
                 if _is_exist(file_name):
                     file_size = os.path.getsize(file_name)
                     if file_size or file_size == media_size:
@@ -468,6 +503,7 @@ async def download_media(
                 await asyncio.sleep(0.5)
                 _move_to_download_path(temp_download_path, file_name)
                 # TODO: if not exist file size or media
+                added_message_id(message.id, file_name)
                 return DownloadStatus.SuccessDownload, file_name
         except pyrogram.errors.exceptions.bad_request_400.BadRequest:
             logger.warning(
