@@ -17,7 +17,7 @@ WORKDIR /app
 COPY --from=compile-image /usr/local/lib/python3.11/site-packages /usr/local/lib/python3.11/site-packages
 COPY --from=compile-image /usr/bin/rclone /app/rclone/rclone
 
-COPY config.yaml data.yaml setup.py media_downloader.py /app/
+COPY setup.py media_downloader.py /app/
 COPY module /app/module
 COPY utils /app/utils
 
