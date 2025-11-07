@@ -14,7 +14,7 @@ from loguru import logger
 from pyrogram import types
 from pyrogram.handlers import CallbackQueryHandler, MessageHandler
 from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup
-import requests
+import requests, time
 from pyquery import PyQuery as pq
 from ruamel import yaml
 
@@ -249,8 +249,8 @@ class DownloadBot:
         self.bot.add_handler(
             MessageHandler(
                 download_from_telegra_link,
-                # filters=pyrogram.filters.regex(r"^https://telegra.ph/.*")&
-                filters=pyrogram.filters.user(self.allowed_user_ids),
+                filters=pyrogram.filters.regex(r"^https?://telegra.ph/.*") & 
+                pyrogram.filters.user(self.allowed_user_ids),
             )
         )
         self.bot.add_handler(
@@ -694,7 +694,6 @@ async def download_from_telegra_link(client: pyrogram.Client, message: pyrogram.
     images = doc('img')
 
     telegra_images: List[List[str, str, int]] = []
-    download_status = ('等待下载', '下载成功', '下载失败')
     msg = f"{telegra_url}\n"
     image_count_zero = int(math.log10(images.size())) + 1
     for i, item in enumerate(images.items()):
@@ -751,14 +750,16 @@ async def download_image(session, url:tuple[str,str,int], save_path, semaphore):
 # urls:[[index, src, status]]
 async def download_picture_urls(client: pyrogram.Client, message: pyrogram.types.Message, reply: pyrogram.types.Message, urls:List[tuple[str,str, int]], save_path, max_concurrent=5):
     semaphore = asyncio.Semaphore(max_concurrent)  # 设置最大并发数
+    interval = 2
     async with aiohttp.ClientSession() as session:
         tasks = [download_image(session, url, save_path, semaphore) for url in urls]
-        progress_task = asyncio.create_task(progress_updater(client, message, reply, urls))
+        progress_task = asyncio.create_task(progress_updater(client, message, reply, urls, interval))
         try:
             await asyncio.gather(*tasks)
         except Exception as e:
             logger.error(f"下载任务中出现异常: {e}")
         finally:
+            time.sleep(interval+1)  # 确保最后一次进度更新
             progress_task.cancel()  # 确保进度更新任务被取消
 
 # 定期检查进度的协程
