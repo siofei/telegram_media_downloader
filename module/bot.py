@@ -58,6 +58,7 @@ class DownloadBot:
         self.download_chat_task: Callable = None
         self.app = None
         self.listen_forward_chat: dict = {}
+        self.listen_download_chat: dict = {}
         self.config: dict = {}
         self._yaml = yaml.YAML()
         self.config_path = os.path.join(os.path.abspath("."), "bot.yaml")
@@ -179,6 +180,12 @@ class DownloadBot:
                 ),
             ),
             types.BotCommand(
+                "listen_download",
+                _t(
+                    "Listen download, use the method to directly enter /listen_download to view"
+                ),
+            ),
+            types.BotCommand(
                 "add_filter",
                 _t(
                     "Add download filter, use the method to directly enter /add_filter to view"
@@ -260,6 +267,14 @@ class DownloadBot:
                 & pyrogram.filters.user(self.allowed_user_ids),
             )
         )
+        # register listen_download command
+        self.bot.add_handler(
+            MessageHandler(
+                set_listen_download_msg,
+                filters=pyrogram.filters.command(["listen_download"]) 
+                & pyrogram.filters.user(self.allowed_user_ids),
+            )
+        )
         self.bot.add_handler(
             MessageHandler(
                 help_command,
@@ -311,8 +326,20 @@ class DownloadBot:
             )
         )
 
+        # client handler for listen_download (only process messages from monitored chats)
+        self.client.add_handler(
+            MessageHandler(
+                listen_download_msg,
+                filters=pyrogram.filters.create(
+                    lambda _, __, message: getattr(message.chat, 'id', None) in _bot.listen_download_chat
+                ),
+            )
+        )
+
+        # client handler for listen_forward
         self.client.add_handler(MessageHandler(listen_forward_msg))
 
+        
         try:
             await send_help_str(self.bot, admin.id)
         except Exception:
@@ -405,6 +432,7 @@ async def send_help_str(client: pyrogram.Client, chat_id):
         f"/download - {_t('Download messages')}\n"
         f"/forward - {_t('Forward messages')}\n"
         f"/listen_forward - {_t('Listen for forwarded messages')}\n"
+        f"/listen_download - {_t('监听频道并下载')}\n"
         f"/forward_to_comments - {_t('Forward a specific media to a comment section')}\n"
         f"/set_language - {_t('Set language')}\n"
         f"/stop - {_t('Stop bot download or forward')}\n\n"
@@ -1216,28 +1244,163 @@ async def set_listen_forward_msg(
     _bot.listen_forward_chat[node.chat_id] = node
 
 
-async def listen_forward_msg(client: pyrogram.Client, message: pyrogram.types.Message):
+async def get_listen_download_node(
+    client: pyrogram.Client,
+    message: pyrogram.types.Message,
+    src_chat_link: str,
+    offset_id: int = 0,
+    end_offset_id: int = 0,
+    download_filter: str = None,
+):
+    """Create TaskNode for listen-download (based on get_forward_task_node).
+
+    Only source chat is needed. Returns TaskNode or None.
     """
-    Forwards messages from a chat to another chat if the message does not contain protected content.
-    If the message contains protected content, it will be downloaded and forwarded to the other chat.
+    limit: int = 0
 
-    Parameters:
-        client (pyrogram.Client): The pyrogram client.
-        message (pyrogram.types.Message): The message to be forwarded.
-    """
-
-    if message.chat and message.chat.id in _bot.listen_forward_chat:
-        node = _bot.listen_forward_chat[message.chat.id]
-
-        # TODO(tangyoha):fix run time change protected content
-        if not node.has_protected_content:
-            await forward_normal_content(client, node, message)
-            await report_bot_status(client, node, immediate_reply=True)
-        else:
-            await _bot.add_download_task(
-                message,
-                node,
+    if end_offset_id:
+        if end_offset_id < offset_id:
+            await client.send_message(
+                message.from_user.id,
+                f" end_offset_id({end_offset_id}) < start_offset_id({offset_id}),"
+                f" end_offset_id{_t('must be greater than')} offset_id",
             )
+            return None
+
+        limit = end_offset_id - offset_id + 1
+
+    src_chat_id, _, topic_id = await parse_link(_bot.client, src_chat_link)
+
+    if not src_chat_id:
+        logger.info(f"{src_chat_id}")
+        await client.send_message(
+            message.from_user.id,
+            _t("Invalid chat link") + f" {src_chat_id}",
+            reply_to_message_id=message.id,
+        )
+        return None
+
+    try:
+        src_chat = await _bot.client.get_chat(src_chat_id)
+    except Exception as e:
+        await client.send_message(
+            message.from_user.id,
+            f"{_t('Invalid chat link')} {e}",
+            reply_to_message_id=message.id,
+        )
+        logger.exception(f"get chat error: {e}")
+        return None
+
+    if download_filter:
+        download_filter = replace_date_time(download_filter)
+        res, err = _bot.filter.check_filter(download_filter)
+        if not res:
+            await client.send_message(message.from_user.id, err, reply_to_message_id=message.id)
+            return
+
+    last_reply_message = await client.send_message(
+        message.from_user.id,
+        "Listen download set, will monitor new messages...",
+        reply_to_message_id=message.id,
+    )
+
+    node = TaskNode(
+        chat_id=src_chat.id,
+        from_user_id=message.from_user.id,
+        reply_message_id=last_reply_message.id,
+        replay_message=last_reply_message.text,
+        has_protected_content=src_chat.has_protected_content,
+        download_filter=download_filter,
+        limit=limit,
+        start_offset_id=offset_id,
+        end_offset_id=end_offset_id,
+        bot=_bot.bot,
+        task_id=_bot.gen_task_id(),
+        task_type=TaskType.ListenForward,
+        topic_id=topic_id,
+    )
+
+    _bot.add_task_node(node)
+
+    node.upload_user = _bot.client
+
+    if node.upload_user is _bot.client:
+        try:
+            await client.edit_message_text(
+                message.from_user.id,
+                last_reply_message.id,
+                "Note: bot may not be in the source group, using user client to download",
+            )
+        except Exception:
+            pass
+
+    return node
+
+
+async def set_listen_download_msg(
+    client: pyrogram.Client, message: pyrogram.types.Message
+):
+    """
+    Command handler to set listen-download: /listen_download <src_chat_link> [filter]
+    """
+    args = message.text.split(maxsplit=2)
+
+    if len(args) < 2:
+        await client.send_message(
+            message.from_user.id,
+            f"{_t('Invalid command format')}. {_t('Please use')} /listen_download https://t.me/c/src_chat [{_t('Filter')}]",
+        )
+        return
+
+    src_chat_link = args[1]
+    download_filter = args[2] if len(args) > 2 else None
+
+    node = await get_listen_download_node(
+        client,
+        message,
+        src_chat_link,
+        download_filter=download_filter,
+    )
+
+    if not node:
+        return
+
+    if node.chat_id in _bot.listen_download_chat:
+        _bot.remove_task_node(_bot.listen_download_chat[node.chat_id].task_id)
+
+    node.is_running = True
+    _bot.listen_download_chat[node.chat_id] = node
+
+
+async def listen_download_msg(client: pyrogram.Client, message: pyrogram.types.Message):
+    """
+    Client-level handler to monitor messages and add to download queue when match.
+    """
+
+    if message.chat and message.chat.id in _bot.listen_download_chat:
+        node = _bot.listen_download_chat[message.chat.id]
+
+        # apply download_filter if any
+        if node.download_filter:
+            meta_data = MetaData()
+            caption = message.caption
+            if caption:
+                caption = validate_title(caption)
+                _bot.app.set_caption_name(node.chat_id, message.media_group_id, caption)
+            else:
+                caption = _bot.app.get_caption_name(node.chat_id, message.media_group_id)
+            set_meta_data(meta_data, message, caption)
+            _bot.filter.set_meta_data(meta_data)
+            if not _bot.filter.exec(node.download_filter):
+                # skip this message
+                return
+
+        # add to download queue
+        await _bot.add_download_task(message, node)
+        try:
+            await report_bot_status(client, node, immediate_reply=True)
+        except Exception:
+            pass
 
 
 async def stop(client: pyrogram.Client, message: pyrogram.types.Message):
@@ -1353,5 +1516,30 @@ async def forward_to_comments(client: pyrogram.Client, message: pyrogram.types.M
     return await forward_message_impl(client, message, True)
 
 
+async def listen_forward_msg(client: pyrogram.Client, message: pyrogram.types.Message):
+    """
+    Forwards messages from a chat to another chat if the message does not contain protected content.
+    If the message contains protected content, it will be downloaded and forwarded to the other chat.
 
-    
+    This is the original listen_forward behavior: non-protected -> forward_normal_content + report; protected -> add_download_task.
+    """
+
+    if message.chat and message.chat.id in _bot.listen_forward_chat:
+        node = _bot.listen_forward_chat[message.chat.id]
+
+        # TODO: fix run time change protected content
+        if not node.has_protected_content:
+            try:
+                await forward_normal_content(client, node, message)
+                await report_bot_status(client, node, immediate_reply=True)
+            except Exception as e:
+                logger.exception(f"listen_forward forward error: {e}")
+        else:
+            # protected content: download then later upload/forward
+            await _bot.add_download_task(
+                message,
+                node,
+            )
+
+
+
